@@ -537,7 +537,7 @@ def get_player_photo(drive, player_folders, player_name):
             continue
     return None
 
-def choose_player_photo(drive, ws, players_played, picture_col_idx, row_num, lookback_games=6):
+def choose_player_photo(drive, ws, players_played, picture_col_idx, row_num, lookback_games=6, exclude_name=None):
     used = set()
     start = max(2, row_num - lookback_games)
     if start <= row_num - 1:
@@ -549,7 +549,10 @@ def choose_player_photo(drive, ws, players_played, picture_col_idx, row_num, loo
     player_folders = list_subfolders(drive, PLAYER_PHOTOS_ROOT_FOLDER_ID)
     folders_map = {_norm(re.sub(r'\s*\([^)]*\)\s*$', '', f['name'])): f for f in player_folders}
 
-    candidates = [p for p in players_played if _norm(p) and _norm(p) in folders_map and _norm(p) not in used]
+    exclude_norm = _norm(exclude_name) if exclude_name else None
+    candidates = [p for p in players_played
+                  if _norm(p) and _norm(p) in folders_map and _norm(p) not in used
+                  and (exclude_norm is None or _norm(p) != exclude_norm)]
     if not candidates:
         return None, None
 
@@ -1243,7 +1246,15 @@ def run():
             scorers = extract_scorers(headers, row_vals)
 
             players_played = [p.strip() for p in (row_vals[hidx("players who played")] if len(row_vals) > hidx("players who played") else "").split(',') if p.strip()]
-            photo_player_name, photo_img = choose_player_photo(drive, ws, players_played, pic_idx, row_num)
+            try:
+                motm_col_idx_early = hidx("player of the match")
+                motm_name_early = (row_vals[motm_col_idx_early].strip()
+                                    if len(row_vals) > motm_col_idx_early and row_vals[motm_col_idx_early] else "")
+            except RuntimeError:
+                motm_name_early = ""
+            
+            photo_player_name, photo_img = choose_player_photo(
+                drive, ws, players_played, pic_idx, row_num, exclude_name=motm_name_early)
             if not photo_player_name:
                 errors.append(f"No eligible player photo found for '{tab}' row {row_num}")
                 continue
