@@ -1,5 +1,5 @@
 # ============================================================
-# match_results_motm_6aside.py
+# match results 6-a-side.py
 # Combined: Match Results + MotM generation & posting (carousel Reel + Story)
 # ============================================================
 import io
