@@ -5,3 +5,5 @@ google-api-python-client
 Pillow
 requests
 pillow-heif
+rembg
+onnxruntime
