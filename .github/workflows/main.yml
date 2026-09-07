@@ -1,0 +1,72 @@
+name: Match Results & MotM Generator
+
+on:
+  schedule:
+    # --- Monday 22:00 → Tuesday 02:00 Prague (summer) ---
+    - cron: '0 20-23 * * 1'
+    - cron: '0 0 * * 2'
+
+    # --- Thursday 22:00 → Friday 02:00 Prague (summer) ---
+    - cron: '0 20-23 * * 4'
+    - cron: '0 0 * * 5'
+
+    # --- Friday 20:00 → Saturday 02:00 Prague (summer) ---
+    - cron: '0 18-23 * * 5'
+    - cron: '0 0 * * 6'
+
+    # --- Saturday 13:00 → 23:00 Prague (summer) ---
+    - cron: '0 11-21 * * 6'
+
+    # --- Sunday 13:00 → 23:00 Prague (summer) ---
+    - cron: '0 11-21 * * 0'
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write secret files
+        run: |
+          echo '${{ secrets.CREDENTIALS_JSON }}' > credentials.json
+          echo '${{ secrets.META_CONFIG_6ASIDE_JSON }}' > meta_config_6aside.json
+
+      - name: Generate images
+        run: python "match_results_motm_6aside.py" --generate-only
+
+      - name: Commit generated images
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add output/*.png 2>/dev/null || echo "no images to add"
+          git commit -m "Add generated match/MotM images" || echo "nothing to commit"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+
+      - name: Post to Meta
+        run: python "match_results_motm_6aside.py" --post-only
+
+      - name: Remove generated images
+        run: |
+          git rm -f output/*.png 2>/dev/null || echo "nothing to remove"
+          git commit -m "Clean up match/MotM images" || echo "nothing to commit"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
