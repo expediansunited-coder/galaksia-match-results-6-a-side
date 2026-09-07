@@ -1258,6 +1258,10 @@ def run():
 
             label_text = f"GP23 {tab}"
 
+            score_line = f"{home_team} {home_score} - {away_score} {away_team}"
+            match_type_line = "Friendly" if is_friendly else (league or "League/Cup")
+            caption = f"{score_line}\n{match_type_line}"
+
             mr_img = build_image(
                 bg_bytes=bg_bytes, font_path=font_path,
                 home_logo=home_logo, away_logo=away_logo,
@@ -1376,6 +1380,7 @@ def run():
                 'mr_path': mr_path, 'mr_story_path': mr_story_path,
                 'motm_path': motm_path, 'motm_story_path': motm_story_path,
                 'motm_player_name': motm_player_name, 'is_loss': is_loss,
+                'caption': f'{tab} Match Results',
             })
 
         for m in match_groups:
@@ -1388,9 +1393,9 @@ def run():
             if m['motm_path']:
                 reel_urls.append(github_raw_url(m['motm_path']))
 
-            caption = f'{tab} Match Results'
+            caption = m.get('caption', f'{tab} Match Results')
             if m['motm_path']:
-                caption += f' + Player of the Match: {m["motm_player_name"]}'
+                caption += f'\n\nPlayer of the Match: {m["motm_player_name"]}'
 
             reel_fb_ok, reel_ig_ok = post_carousel_to_meta(reel_urls, caption=caption)
 
@@ -1421,14 +1426,12 @@ def run():
                 if m['motm_path'] and m['motm_player_name']:
                     # Re-fetch headers fresh (match_groups doesn't carry them)
                     header_row = with_retry(ws.row_values, 1)
+                    header_row = with_retry(ws.row_values, 1)
                     headers_lower = [h.strip().lower() for h in header_row]
                     try:
-                        pm_col_idx = headers_lower.index('picture  motm')
+                        pm_col_idx = headers_lower.index('motm')
                     except ValueError:
-                        try:
-                            pm_col_idx = headers_lower.index('picture motm')
-                        except ValueError:
-                            pm_col_idx = None
+                        pm_col_idx = None
                     if pm_col_idx is not None:
                         with_retry(ws.update_cell, row_num, pm_col_idx + 1, m['motm_player_name'])
                         print(f'{tab} row {row_num}: Picture MotM = {m["motm_player_name"]}')
