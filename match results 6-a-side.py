@@ -29,6 +29,12 @@ except Exception as e:
     print('  [heic] pillow-heif not available: %s' % e)
 
 try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()   # lets Pillow open .heic/.heif
+except Exception as _e:
+    print('  [heic] pillow-heif not available: %s' % _e)
+
+try:
     from rembg import remove
 except ImportError:
     def remove(data):
