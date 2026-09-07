@@ -61,7 +61,7 @@ jobs:
           git push origin HEAD:main
 
       - name: Post to Meta
-        run: python "match_results_motm_6aside.py" --post-only
+        run: python "match results 6-a-side.py" --post-only
 
       - name: Remove generated images
         run: |
