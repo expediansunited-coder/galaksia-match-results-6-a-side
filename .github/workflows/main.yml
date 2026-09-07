@@ -48,7 +48,7 @@ jobs:
           echo '${{ secrets.META_CONFIG_6ASIDE_JSON }}' > meta_config_6aside.json
 
       - name: Generate images
-        run: python "match_results_motm_6aside.py" --generate-only
+        run: python "match results 6-a-side.py" --generate-only
 
       - name: Commit generated images
         run: |
