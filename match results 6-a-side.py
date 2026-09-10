@@ -23,16 +23,11 @@ from googleapiclient.http import MediaIoBaseDownload
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 try:
-    from pillow_heif import register_heif_opener
+    from pillow_heif import register_heif_opener, read_heif
     register_heif_opener()
 except Exception as e:
+    read_heif = None
     print('  [heic] pillow-heif not available: %s' % e)
-
-try:
-    from pillow_heif import register_heif_opener
-    register_heif_opener()   # lets Pillow open .heic/.heif
-except Exception as _e:
-    print('  [heic] pillow-heif not available: %s' % _e)
 
 try:
     from rembg import remove
@@ -319,15 +314,43 @@ def find_file_by_stem(drive, parent_folder_id, target_stem):
     return None
 
 def load_image_from_bytes(data, filename="", svg_width=1000):
-    if filename.lower().endswith(".svg") and fitz is not None:
+    name = (filename or "").lower()
+
+    if name.endswith(".svg") and fitz is not None:
         doc = fitz.open(stream=data, filetype="svg")
         page = doc[0]
         zoom = svg_width / page.rect.width
         matrix = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=matrix, alpha=True)
         png_bytes = pix.tobytes("png")
-        return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-    return Image.open(io.BytesIO(data)).convert("RGBA")
+        img = Image.open(io.BytesIO(png_bytes))
+        img.load()
+        return img.convert("RGBA")
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        return img.convert("RGBA")
+    except Exception as pil_err:
+        if read_heif is not None:
+            try:
+                heif = read_heif(data)
+                img = Image.frombytes(
+                    heif.mode,
+                    heif.size,
+                    heif.data,
+                    "raw",
+                )
+                return img.convert("RGBA")
+            except Exception as heif_err:
+                raise RuntimeError(
+                    f"Could not decode image '{filename}'. "
+                    f"Pillow error: {pil_err}; HEIF error: {heif_err}"
+                )
+
+        raise RuntimeError(
+            f"Could not decode image '{filename}'. Pillow error: {pil_err}"
+        )
 
 def build_team_league_map(client):
     ws = with_retry(client.open_by_key, FIX_SS_ID).worksheet(INDEX_TAB)
@@ -551,8 +574,12 @@ def get_player_photo(drive, player_folders, player_name):
     for choice in candidates:
         try:
             data = download_file_bytes(drive, choice['id'])
-            Image.open(io.BytesIO(data)).verify()
-            cut = remove(data)
+
+            raw_img = load_image_from_bytes(data, filename=choice['name'])
+            tmp = io.BytesIO()
+            raw_img.save(tmp, format="PNG")
+            
+            cut = remove(tmp.getvalue())
             img = Image.open(io.BytesIO(cut)).convert('RGBA')
             alpha = img.split()[3]
             alpha = alpha.filter(ImageFilter.MinFilter(9))
