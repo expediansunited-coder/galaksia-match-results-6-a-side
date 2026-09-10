@@ -7,3 +7,4 @@ requests
 pillow-heif
 rembg
 onnxruntime
+PyMuPDF
