@@ -69,6 +69,8 @@ IDX_COL_TEAM = 0
 IDX_COL_LEAGUE = 2
 
 OUTPUT_DIR = 'output'
+MANIFEST_FILE = os.path.join(OUTPUT_DIR, 'match_groups_6aside.json')
+
 GITHUB_REPO_RAW_BASE = ('https://raw.githubusercontent.com/'
                          'expediansunited-coder/galaksia-match-results-6-a-side/main/')
 
@@ -316,13 +318,20 @@ def find_file_by_stem(drive, parent_folder_id, target_stem):
 def load_image_from_bytes(data, filename="", svg_width=1000):
     name = (filename or "").lower()
 
-    if name.endswith(".svg") and fitz is not None:
+    if name.endswith(".svg"):
+        if fitz is None:
+            raise RuntimeError(
+                f"Cannot load SVG '{filename}' because PyMuPDF is not installed. "
+                f"Add PyMuPDF to requirements.txt."
+            )
+
         doc = fitz.open(stream=data, filetype="svg")
         page = doc[0]
         zoom = svg_width / page.rect.width
         matrix = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=matrix, alpha=True)
         png_bytes = pix.tobytes("png")
+
         img = Image.open(io.BytesIO(png_bytes))
         img.load()
         return img.convert("RGBA")
@@ -351,6 +360,65 @@ def load_image_from_bytes(data, filename="", svg_width=1000):
         raise RuntimeError(
             f"Could not decode image '{filename}'. Pillow error: {pil_err}"
         )
+
+def get_nationality_for_player(client, player_name):
+    ws = with_retry(client.open_by_key(PERSONAL_INFO_SS_ID).worksheet, PERSONAL_INFO_TAB)
+    rows = with_retry(ws.get_all_values)
+
+    if not rows:
+        return None
+
+    headers = rows[0]
+    headers_norm = [h.strip().lower() for h in headers]
+
+    try:
+        name_idx = headers_norm.index("name")
+        nat_idx = headers_norm.index("nationality")
+    except ValueError as e:
+        raise RuntimeError(f"Expected columns not found in Personal Info headers: {e}")
+
+    target_norm = normalize_fuzzy(player_name)
+    target_tokens = set(target_norm.split())
+
+    # 1. Exact normalized match only
+    for row in rows[1:]:
+        if len(row) <= max(name_idx, nat_idx):
+            continue
+
+        row_name = row[name_idx].strip()
+        row_norm = normalize_fuzzy(row_name)
+
+        if row_norm == target_norm:
+            return row[nat_idx].strip() or None
+
+    # 2. Token-contained match, but only for names with at least 2 tokens
+    # Example: "David Oliveira" can match "David Oliveira (PIBFAL, VETs)"
+    if len(target_tokens) >= 2:
+        candidates = []
+
+        for row in rows[1:]:
+            if len(row) <= max(name_idx, nat_idx):
+                continue
+
+            row_name = row[name_idx].strip()
+            row_norm = normalize_fuzzy(row_name)
+            row_tokens = set(row_norm.split())
+
+            if target_tokens.issubset(row_tokens):
+                candidates.append(row)
+
+        if len(candidates) == 1:
+            return candidates[0][nat_idx].strip() or None
+
+        if len(candidates) > 1:
+            raise RuntimeError(
+                f"Multiple Personal Info nationality matches for '{player_name}'. "
+                f"Please make the sheet name more exact."
+            )
+
+    # 3. Do NOT use loose fuzzy matching for nationality.
+    # It can incorrectly return Argentina/Portugal/etc.
+    return None
 
 def build_team_league_map(client):
     ws = with_retry(client.open_by_key, FIX_SS_ID).worksheet(INDEX_TAB)
@@ -619,7 +687,6 @@ def choose_player_photo(drive, ws, players_played, picture_col_idx, row_num, loo
     for player_name in candidates:
         img = get_player_photo(drive, player_folders, player_name)
         if img is not None:
-            ws.update_cell(row_num, picture_col_idx + 1, player_name)
             return player_name, img
         print(f"  photo failed for {player_name}, trying next...")
     return None, None
@@ -812,42 +879,6 @@ def extract_scorers(headers, row_vals):
         entry = by_name[key]
         out.append((' '.join(entry['mins']), entry['name']))
     return out
-
-# ============================================================
-# MOTM: NATIONALITY LOOKUP (adapted — uses gspread client like the rest of the script,
-# instead of the raw Sheets API service used in the original standalone script)
-# ============================================================
-def get_nationality_for_player(client, player_name):
-    ws = with_retry(client.open_by_key(PERSONAL_INFO_SS_ID).worksheet, PERSONAL_INFO_TAB)
-    rows = with_retry(ws.get_all_values)
-    if not rows:
-        return None
-    headers = rows[0]
-    try:
-        name_idx = headers.index("Name")
-        nat_idx = headers.index("Nationality")
-    except ValueError as e:
-        raise RuntimeError(f"Expected columns not found in Personal Info headers: {e}")
-
-    target_norm = normalize_fuzzy(player_name)
-    best_row, best_ratio = None, 0.0
-    for row in rows[1:]:
-        if len(row) <= name_idx:
-            continue
-        row_name = row[name_idx]
-        row_norm = normalize_fuzzy(row_name)
-        if row_norm == target_norm:
-            best_row, best_ratio = row, 1.0
-            break
-        ratio = difflib.SequenceMatcher(None, target_norm, row_norm).ratio()
-        if ratio > best_ratio:
-            best_ratio, best_row = ratio, row
-
-    if best_row is None or best_ratio < 0.5:
-        return None
-    if len(best_row) <= nat_idx:
-        return None
-    return best_row[nat_idx].strip() or None
 
 # ============================================================
 # MOTM: PLAYER PHOTO FOLDER LOOKUP (unchanged fuzzy logic from standalone script)
@@ -1378,80 +1409,71 @@ def run():
                             motm_story_path = None
 
             match_groups.append({
-                'tab': tab, 'ws': ws, 'row_num': row_num, 'post_idx': post_idx,
-                'mr_path': mr_path, 'mr_story_path': mr_story_path,
-                'motm_path': motm_path, 'motm_story_path': motm_story_path,
+                'tab': tab,
+                'row_num': row_num,
+                'post_idx': post_idx,
+                'mr_path': mr_path,
+                'mr_story_path': mr_story_path,
+                'motm_path': motm_path,
+                'motm_story_path': motm_story_path,
+                'photo_player_name': photo_player_name,
                 'motm_player_name': motm_player_name,
                 'is_loss': is_loss,
+                'caption': caption,
             })
 
         send_error_email(errors)
-        send_error_email(errors)
+
+        with open(MANIFEST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(match_groups, f, ensure_ascii=False, indent=2)
+        
         print('Generation complete. %d match(es) ready.' % len(match_groups))
         return
 
     import glob
 
     if POST_ONLY and not GENERATE_ONLY:
-        print('Post-only: rediscovering pending rows and matching saved files...')
+        print('Post-only: loading generated manifest...')
+
+        if not os.path.exists(MANIFEST_FILE):
+            raise RuntimeError(f'Manifest not found: {MANIFEST_FILE}. Run --generate-only first.')
+
+        with open(MANIFEST_FILE, 'r', encoding='utf-8') as f:
+            saved_groups = json.load(f)
+
+        pending_map = {
+            (item['tab'], item['row_num']): item
+            for item in pending
+        }
+
         match_groups = []
 
-        for item in pending:
-            tab = item['tab']; ws = item['ws']; row_num = item['row_num']
-            headers = item['headers']; post_idx = item['post_idx']
-            row_vals = with_retry(ws.row_values, row_num)
+        for m in saved_groups:
+            key = (m['tab'], m['row_num'])
 
-            def hidx(name):
-                n = name.lower()
-                if n not in headers:
-                    return None
-                return headers.index(n)
-
-            gi = hidx("galaksia goals count"); oi = hidx("opponent goals count")
-            try:
-                gal_i = int(float(str(row_vals[gi]).replace(",", ".").strip() or "0")) if gi is not None and len(row_vals) > gi else 0
-            except ValueError:
-                gal_i = 0
-            try:
-                opp_i = int(float(str(row_vals[oi]).replace(",", ".").strip() or "0")) if oi is not None and len(row_vals) > oi else 0
-            except ValueError:
-                opp_i = 0
-            is_loss = opp_i > gal_i
-
-            safe_tab = re.sub(r'[^A-Za-z0-9]+', '_', tab)
-
-            mr_matches = glob.glob(os.path.join(OUTPUT_DIR, f'matchresults_{safe_tab}_*_{row_num}.png'))
-            mr_matches = [p for p in mr_matches if not p.endswith('_story.png')]
-            mr_path = mr_matches[0] if mr_matches else None
-            mr_story_path = mr_path.replace('.png', '_story.png') if mr_path else None
-            if mr_story_path and not os.path.exists(mr_story_path):
-                mr_story_path = None
-
-            motm_path = None
-            motm_story_path = None
-            motm_player_name = None
-            if not is_loss:
-                pm_idx = hidx("player of the match")
-                motm_player_name = (row_vals[pm_idx].strip()
-                                     if pm_idx is not None and len(row_vals) > pm_idx and row_vals[pm_idx] else "")
-                mm_matches = glob.glob(os.path.join(OUTPUT_DIR, f'motm_{safe_tab}_*_{row_num}.png'))
-                mm_matches = [p for p in mm_matches if not p.endswith('_story.png')]
-                motm_path = mm_matches[0] if mm_matches else None
-                motm_story_path = motm_path.replace('.png', '_story.png') if motm_path else None
-                if motm_story_path and not os.path.exists(motm_story_path):
-                    motm_story_path = None
-
-            if not mr_path:
-                print(f'{tab} row {row_num}: no Match Results image found on disk - skipping.')
+            if key not in pending_map:
+                print(f"{m['tab']} row {m['row_num']}: no longer pending - skipping.")
                 continue
 
-            match_groups.append({
-                'tab': tab, 'ws': ws, 'row_num': row_num, 'post_idx': post_idx,
-                'mr_path': mr_path, 'mr_story_path': mr_story_path,
-                'motm_path': motm_path, 'motm_story_path': motm_story_path,
-                'motm_player_name': motm_player_name, 'is_loss': is_loss,
-                'caption': f'{tab} Match Results',
-            })
+            item = pending_map[key]
+            m['ws'] = item['ws']
+            m['post_idx'] = item['post_idx']
+
+            if not os.path.exists(m['mr_path']):
+                print(f"{m['tab']} row {m['row_num']}: missing Match Results image - skipping.")
+                continue
+
+            if m.get('mr_story_path') and not os.path.exists(m['mr_story_path']):
+                m['mr_story_path'] = None
+
+            if m.get('motm_path') and not os.path.exists(m['motm_path']):
+                m['motm_path'] = None
+                m['motm_story_path'] = None
+
+            if m.get('motm_story_path') and not os.path.exists(m['motm_story_path']):
+                m['motm_story_path'] = None
+
+            match_groups.append(m)
 
         for m in match_groups:
             tab = m['tab']; ws = m['ws']; row_num = m['row_num']; post_idx = m['post_idx']
@@ -1492,21 +1514,36 @@ def run():
             fully_sent = all_fb_ok and all_ig_ok
 
             if fully_sent:
-                with_retry(ws.update_cell, row_num, post_idx + 1, 'Sent')
-                if m['motm_path'] and m['motm_player_name']:
-                    # Re-fetch headers fresh (match_groups doesn't carry them)
-                    header_row = with_retry(ws.row_values, 1)
-                    header_row = with_retry(ws.row_values, 1)
-                    headers_lower = [h.strip().lower() for h in header_row]
+                header_row = with_retry(ws.row_values, 1)
+                headers_lower = [h.strip().lower() for h in header_row]
+            
+                # Update Picture only after successful posting
+                try:
+                    picture_col_idx = headers_lower.index('picture')
+                except ValueError:
+                    picture_col_idx = None
+            
+                if picture_col_idx is not None and m.get('photo_player_name'):
+                    with_retry(ws.update_cell, row_num, picture_col_idx + 1, m['photo_player_name'])
+                    print(f'{tab} row {row_num}: Picture = {m["photo_player_name"]}')
+                else:
+                    print(f'{tab} row {row_num}: WARNING - "Picture" column not found or no picture player.')
+            
+                # Update MotM only after successful posting
+                if m.get('motm_path') and m.get('motm_player_name'):
                     try:
-                        pm_col_idx = headers_lower.index('motm')
+                        motm_col_idx = headers_lower.index('motm')
                     except ValueError:
-                        pm_col_idx = None
-                    if pm_col_idx is not None:
-                        with_retry(ws.update_cell, row_num, pm_col_idx + 1, m['motm_player_name'])
-                        print(f'{tab} row {row_num}: Picture MotM = {m["motm_player_name"]}')
+                        motm_col_idx = None
+            
+                    if motm_col_idx is not None:
+                        with_retry(ws.update_cell, row_num, motm_col_idx + 1, m['motm_player_name'])
+                        print(f'{tab} row {row_num}: MotM = {m["motm_player_name"]}')
                     else:
-                        print(f'{tab} row {row_num}: WARNING - "Picture MotM" column not found.')
+                        print(f'{tab} row {row_num}: WARNING - "MotM" column not found.')
+            
+                # Mark Sent last
+                with_retry(ws.update_cell, row_num, post_idx + 1, 'Sent')
                 print(f'{tab} row {row_num}: marked Sent.')
             else:
                 print(f'{tab} row {row_num}: NOT marked Sent '
