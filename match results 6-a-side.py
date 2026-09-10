@@ -361,6 +361,37 @@ def load_image_from_bytes(data, filename="", svg_width=1000):
             f"Could not decode image '{filename}'. Pillow error: {pil_err}"
         )
 
+def load_raster_photo_from_bytes(data, filename=""):
+    """
+    For player photos only.
+    Does not resize, crop, rotate, or alter proportions.
+    Only decodes the image bytes into RGBA.
+    """
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        return img.convert("RGBA")
+    except Exception as pil_err:
+        if read_heif is not None:
+            try:
+                heif = read_heif(data)
+                img = Image.frombytes(
+                    heif.mode,
+                    heif.size,
+                    heif.data,
+                    "raw",
+                )
+                return img.convert("RGBA")
+            except Exception as heif_err:
+                raise RuntimeError(
+                    f"Could not decode player photo '{filename}'. "
+                    f"Pillow error: {pil_err}; HEIF error: {heif_err}"
+                )
+
+        raise RuntimeError(
+            f"Could not decode player photo '{filename}'. Pillow error: {pil_err}"
+        )
+
 def get_nationality_for_player(client, player_name):
     ws = with_retry(client.open_by_key(PERSONAL_INFO_SS_ID).worksheet, PERSONAL_INFO_TAB)
     rows = with_retry(ws.get_all_values)
@@ -633,35 +664,45 @@ def find_player_folder_id(player_folders, player_name):
 
 def get_player_photo(drive, player_folders, player_name):
     folder_id = find_player_folder_id(player_folders, player_name)
-    if not folder_id: return None
+    if not folder_id:
+        return None
+
     files = list_folder_files(drive, folder_id)
     candidates = [f for f in files if os.path.splitext(f['name'])[0].strip().lower() == 'front']
     if not candidates:
         return None
+
     random.shuffle(candidates)
+
     for choice in candidates:
         try:
             data = download_file_bytes(drive, choice['id'])
 
-            raw_img = load_image_from_bytes(data, filename=choice['name'])
-            tmp = io.BytesIO()
-            raw_img.save(tmp, format="PNG")
-            
-            cut = remove(tmp.getvalue())
+            # Original Match Results behaviour
+            Image.open(io.BytesIO(data)).verify()
+            cut = remove(data)
             img = Image.open(io.BytesIO(cut)).convert('RGBA')
+
             alpha = img.split()[3]
             alpha = alpha.filter(ImageFilter.MinFilter(9))
             img.putalpha(alpha)
+
             img = crop_to_content(img)
+
             w, h = img.size
             img = img.crop((0, 0, w, int(h * 5 / 8)))
+
             img = fade_bottom(img, fade_frac=0.25)
+
             content_bbox = (0, 0, img.width, img.height)
             img.info['content_bbox'] = content_bbox
+
             return img
+
         except Exception as e:
             print(f"  skip photo for {player_name}: {e}")
             continue
+
     return None
 
 def choose_player_photo(drive, ws, players_played, picture_col_idx, row_num, lookback_games=6, exclude_name=None):
@@ -1017,7 +1058,7 @@ def build_motm_image(drive, client, player_name, motm_background, out_path):
     if not front_file:
         raise RuntimeError(f"Could not find a 'front' photo in folder '{photo_folder['name']}'")
     photo_bytes = download_file_bytes(drive, front_file["id"])
-    photo_img = load_image_from_bytes(photo_bytes, filename=front_file["name"])
+    photo_img = load_raster_photo_from_bytes(photo_bytes, filename=front_file["name"])
 
     nationality = get_nationality_for_player(client, player_name)
     if not nationality:
