@@ -772,8 +772,118 @@ def find_fixture(fixtures, team_tab, match_date_yyyymmdd):
 # ============================================================
 # MATCH RESULTS: BUILD IMAGE (unchanged)
 # ============================================================
+def _text_width(draw, text, font):
+    b = draw.textbbox((0, 0), text, font=font)
+    return b[2] - b[0]
+
+def _wrap_minutes(draw, minutes, font, max_width):
+    minutes = (minutes or '').strip()
+    if not minutes:
+        return []
+
+    parts = minutes.split()
+    lines = []
+    cur = ""
+
+    for p in parts:
+        test = p if not cur else cur + " " + p
+        if _text_width(draw, test, font) <= max_width:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+            cur = p
+
+    if cur:
+        lines.append(cur)
+
+    return lines
+
+def _prepare_scorer_layout(draw, scorers, font_path):
+    name_max_w = CANVAS_W - SCORERS_NAME_X - 20
+    min_max_w = SCORERS_NAME_X - SCORERS_MIN_X - 10
+    max_y = 860
+
+    for size in range(SCORERS_FONT_SIZE, 7, -1):
+        font = load_font(font_path, size)
+        line_h = max(size + 8, int(size * 1.45))
+
+        prepared = []
+        total_lines = 0
+        ok = True
+
+        for minutes, name in scorers:
+            name_text = (name or '').upper()
+
+            if _text_width(draw, name_text, font) > name_max_w:
+                ok = False
+                break
+
+            minute_lines = _wrap_minutes(draw, minutes, font, min_max_w)
+            row_lines = max(1, len(minute_lines))
+
+            prepared.append((minute_lines, name_text, row_lines))
+            total_lines += row_lines
+
+        if not scorers:
+            return font, line_h, []
+
+        last_y = SCORERS_START_Y + max(0, total_lines - 1) * line_h
+        if ok and last_y <= max_y:
+            return font, line_h, prepared
+
+    font = load_font(font_path, 8)
+    line_h = 16
+    prepared = []
+    for minutes, name in scorers:
+        minute_lines = _wrap_minutes(draw, minutes, font, min_max_w)
+        row_lines = max(1, len(minute_lines))
+        prepared.append((minute_lines, (name or '').upper(), row_lines))
+    return font, line_h, prepared
+
+def draw_scorers_block(draw, scorers, font_path, mirror_layout=False):
+    font, line_h, prepared = _prepare_scorer_layout(draw, scorers, font_path)
+
+    if mirror_layout:
+        min_x = CANVAS_W - SCORERS_MIN_X
+        name_x = CANVAS_W - SCORERS_NAME_X
+        min_anchor = "rs"
+        name_anchor = "rs"
+    else:
+        min_x = SCORERS_MIN_X
+        name_x = SCORERS_NAME_X
+        min_anchor = "ls"
+        name_anchor = "ls"
+
+    y = SCORERS_START_Y
+
+    for minute_lines, name_text, row_lines in prepared:
+        for i, line in enumerate(minute_lines):
+            draw.text(
+                (min_x, y + i * line_h),
+                line,
+                font=font,
+                fill=TEXT_COLOR,
+                anchor=min_anchor,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0)
+            )
+
+        draw.text(
+            (name_x, y),
+            name_text,
+            font=font,
+            fill=TEXT_COLOR,
+            anchor=name_anchor,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0)
+        )
+
+        y += row_lines * line_h
+
 def build_image(bg_bytes, font_path, home_logo, away_logo, home_score, away_score,
-                scorers, player_photo, home_team_name, away_team_name, league_logo, label_text, is_friendly):
+                scorers, player_photo, home_team_name, away_team_name, league_logo, label_text,
+                is_friendly, mirror_layout=False):
     base = Image.open(io.BytesIO(bg_bytes)).convert('RGBA')
     if base.size != (CANVAS_W, CANVAS_H):
         base = base.resize((CANVAS_W, CANVAS_H), Image.LANCZOS)
@@ -850,27 +960,61 @@ def build_image(bg_bytes, font_path, home_logo, away_logo, home_score, away_scor
     if away_team_name:
         draw_team_name(away_team_name, AWAY_LOGO_CENTER[0])
 
-    f_scorer = load_font(font_path, SCORERS_FONT_SIZE)
-    y = SCORERS_START_Y
-    for minutes, name in scorers:
-        if minutes:
-            draw.text((SCORERS_MIN_X, y), minutes, font=f_scorer, fill=TEXT_COLOR, anchor="ls", stroke_width=2, stroke_fill=(0, 0, 0))
-        draw.text((SCORERS_NAME_X, y), name.upper(), font=f_scorer, fill=TEXT_COLOR, anchor="ls", stroke_width=2, stroke_fill=(0, 0, 0))
-        y += SCORERS_LINE_H
+    draw_scorers_block(draw, scorers, font_path, mirror_layout=mirror_layout)
+
+    if mirror_layout:
+        league_logo_center = (CANVAS_W - LEAGUE_LOGO_CENTER[0], LEAGUE_LOGO_CENTER[1])
+        friendly_x = CANVAS_W - FRIENDLY_RIGHT_X
+        friendly_anchor = "ls"
+    else:
+        league_logo_center = LEAGUE_LOGO_CENTER
+        friendly_x = FRIENDLY_RIGHT_X
+        friendly_anchor = "rs"
 
     if is_friendly:
         f_fr = load_font(font_path, FRIENDLY_FONT_SIZE)
-        draw.text((FRIENDLY_RIGHT_X, FRIENDLY_Y), "FRIENDLY", font=f_fr, fill=TEXT_COLOR, anchor="rs", stroke_width=2, stroke_fill=(0, 0, 0))
+        draw.text(
+            (friendly_x, FRIENDLY_Y),
+            "FRIENDLY",
+            font=f_fr,
+            fill=TEXT_COLOR,
+            anchor=friendly_anchor,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0)
+        )
+
         f_label = load_font(font_path, LABEL_FONT_SIZE)
-        draw.text((FRIENDLY_RIGHT_X, FRIENDLY_Y + LABEL_FONT_SIZE + 12), label_text.upper(),
-                  font=f_label, fill=TEXT_COLOR, anchor="rs", stroke_width=2, stroke_fill=(0, 0, 0))
+        draw.text(
+            (friendly_x, FRIENDLY_Y + LABEL_FONT_SIZE + 12),
+            label_text.upper(),
+            font=f_label,
+            fill=TEXT_COLOR,
+            anchor=friendly_anchor,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0)
+        )
     else:
         if league_logo is not None:
             ll = fit_logo(league_logo, LEAGUE_LOGO_MAX)
-            base.alpha_composite(ll, (int(LEAGUE_LOGO_CENTER[0] - ll.width/2), int(LEAGUE_LOGO_CENTER[1] - ll.height/2)))
+            base.alpha_composite(
+                ll,
+                (
+                    int(league_logo_center[0] - ll.width / 2),
+                    int(league_logo_center[1] - ll.height / 2)
+                )
+            )
+
         if label_text:
             f_label = load_font(font_path, LABEL_FONT_SIZE)
-            draw.text((LEAGUE_LOGO_CENTER[0], LABEL_Y), label_text.upper(), font=f_label, fill=TEXT_COLOR, anchor="mm", stroke_width=2, stroke_fill=(0, 0, 0))
+            draw.text(
+                (league_logo_center[0], LABEL_Y),
+                label_text.upper(),
+                font=f_label,
+                fill=TEXT_COLOR,
+                anchor="mm",
+                stroke_width=2,
+                stroke_fill=(0, 0, 0)
+            )
 
     return base.convert('RGB')
 
@@ -1410,7 +1554,9 @@ def run():
                 home_score=home_score, away_score=away_score,
                 scorers=scorers, player_photo=photo_img,
                 home_team_name=home_display, away_team_name=away_display,
-                league_logo=league_logo, label_text=label_text, is_friendly=is_friendly
+                league_logo=league_logo, label_text=label_text,
+                is_friendly=is_friendly,
+                mirror_layout=not tab_is_home
             )
 
             safe_tab = re.sub(r'[^A-Za-z0-9]+', '_', tab)
