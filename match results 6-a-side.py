@@ -1540,7 +1540,7 @@ def run():
                 lf = find_logo_file(logo_files, league)
                 if lf:
                     raw = download_file_bytes(drive, lf['id'])
-                    league_logo = remove_edge_background(Image.open(io.BytesIO(raw)).convert('RGBA'))
+                    league_logo = Image.open(io.BytesIO(raw)).convert('RGBA')
 
             label_text = f"GP23 {tab}"
 
