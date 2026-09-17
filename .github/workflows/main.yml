@@ -3,19 +3,19 @@ name: Match Results & MotM Generator
 on:
   schedule:
     # --- Monday 22:00 → Tuesday 02:00 Prague (summer) ---
-    - cron: '0 20-23 * * 1'
-    - cron: '0 0 * * 2'
+    - cron: '17 20-23 * * 1'
+    - cron: '17 0 * * 2'
 
     # --- Thursday 22:00 → Friday 02:00 Prague (summer) ---
-    - cron: '0 20-23 * * 4'
-    - cron: '0 0 * * 5'
+    - cron: '17 20-23 * * 4'
+    - cron: '17 0 * * 5'
 
     # --- Friday 20:00 → Saturday 02:00 Prague (summer) ---
-    - cron: '0 18-23 * * 5'
-    - cron: '0 0 * * 6'
+    - cron: '17 18-23 * * 5'
+    - cron: '17 0 * * 6'
 
     # --- Saturday 13:00 → 23:00 Prague (summer) ---
-    - cron: '0 11-21 * * 6'
+    - cron: '17 11-21 * * 6'
 
     # --- Sunday 13:00 → 23:00 Prague (summer) ---
     - cron: '0 11-21 * * 0'
