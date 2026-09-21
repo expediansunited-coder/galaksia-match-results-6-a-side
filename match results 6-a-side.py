@@ -1486,16 +1486,27 @@ def post_carousel_to_meta(image_urls, caption=''):
         token = user_token
 
     # IMPORTANT:
-    # IG carousel first. If this fails after 3 attempts, raise and stop the script.
+    # 1) IG FIRST
+    # If there is only one image, IG cannot use carousel.
+    # Post it as a normal single-image feed post instead.
     try:
-        meta_retry(
-            'IG carousel',
-            lambda: _ig_carousel_post(ig_id, user_token, image_urls, caption),
-            attempts=3
-        )
+        if len(image_urls) == 1:
+            meta_retry(
+                'IG single image feed',
+                lambda: _ig_single_feed_post(ig_id, user_token, image_urls[0], caption),
+                attempts=3
+            )
+        else:
+            meta_retry(
+                'IG carousel',
+                lambda: _ig_carousel_post(ig_id, user_token, image_urls, caption),
+                attempts=3
+            )
+
         ig_ok = True
+
     except Exception as e:
-        raise RuntimeError(f'IG carousel failed after 3 attempts. Aborting whole script: {e}')
+        raise RuntimeError(f'IG feed failed after 3 attempts. Aborting whole script: {e}')
 
     # FB carousel second. Retry 3 times.
     fb_ok = False
@@ -1510,6 +1521,34 @@ def post_carousel_to_meta(image_urls, caption=''):
         print(f'    [meta] FB carousel FAILED after 3 attempts: {e}')
 
     return fb_ok, ig_ok
+
+def _ig_single_feed_post(ig_id, token, image_url, caption=''):
+    c = requests.post('%s/%s/media' % (GRAPH, ig_id),
+                      data={
+                          'image_url': image_url,
+                          'caption': caption,
+                          'access_token': token
+                      })
+    c.raise_for_status()
+    creation_id = c.json()['id']
+
+    for _ in range(10):
+        st = requests.get('%s/%s' % (GRAPH, creation_id),
+                          params={'fields': 'status_code', 'access_token': token})
+        code = st.json().get('status_code')
+        if code == 'FINISHED':
+            break
+        if code == 'ERROR':
+            raise RuntimeError('IG single image container error: %s' % st.text)
+        time.sleep(3)
+
+    p = requests.post('%s/%s/media_publish' % (GRAPH, ig_id),
+                      data={
+                          'creation_id': creation_id,
+                          'access_token': token
+                      })
+    p.raise_for_status()
+    return p.json()
 
 # ============================================================
 # MAIN RUN (generate + post, split via --generate-only / --post-only)
