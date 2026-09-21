@@ -1276,21 +1276,48 @@ def _fb_story(page_id, token, photo_id):
     return r.json()
 
 def _ig_publish(ig_id, token, image_url, is_story=True):
-    data = {'image_url': image_url, 'access_token': token, 'media_type': 'STORIES'}
+    data = {
+        'image_url': image_url,
+        'access_token': token,
+        'media_type': 'STORIES'
+    }
+
     c = requests.post('%s/%s/media' % (GRAPH, ig_id), data=data)
     c.raise_for_status()
     creation_id = c.json()['id']
-    for _ in range(10):
+
+    finished = False
+    last_status = None
+
+    for _ in range(20):
         st = requests.get('%s/%s' % (GRAPH, creation_id),
-                          params={'fields': 'status_code', 'access_token': token})
-        code = st.json().get('status_code')
-        if code == 'FINISHED':
+                          params={
+                              'fields': 'status_code',
+                              'access_token': token
+                          })
+        st.raise_for_status()
+        last_status = st.json().get('status_code')
+
+        if last_status == 'FINISHED':
+            finished = True
             break
-        if code == 'ERROR':
-            raise RuntimeError('IG container error: %s' % st.text)
+
+        if last_status == 'ERROR':
+            raise RuntimeError('IG story container error: %s' % st.text)
+
         time.sleep(3)
+
+    if not finished:
+        raise RuntimeError(
+            'IG story container not ready after waiting. '
+            'Last status: %s, creation_id: %s' % (last_status, creation_id)
+        )
+
     p = requests.post('%s/%s/media_publish' % (GRAPH, ig_id),
-                      data={'creation_id': creation_id, 'access_token': token})
+                      data={
+                          'creation_id': creation_id,
+                          'access_token': token
+                      })
     p.raise_for_status()
     return p.json()
 
@@ -1300,12 +1327,39 @@ def _ig_publish(ig_id, token, image_url, is_story=True):
 # match success (Match Results script's version raised on total failure;
 # here we need granular success flags per platform).
 # ============================================================
+def meta_retry(label, func, attempts=3, base_delay=5):
+    """
+    Retry a Meta API operation.
+    Raises after final failure.
+    """
+    last_err = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            print(f"    [meta] {label}: attempt {attempt}/{attempts}")
+            result = func()
+            print(f"    [meta] {label}: OK")
+            return result
+        except Exception as e:
+            last_err = e
+            print(f"    [meta] {label}: FAILED attempt {attempt}/{attempts}: {e}")
+
+            if attempt < attempts:
+                delay = base_delay * attempt
+                print(f"    [meta] {label}: retrying in {delay}s")
+                time.sleep(delay)
+
+    raise RuntimeError(f"{label} failed after {attempts} attempts: {last_err}")
+
 def post_story_to_meta(story_url, caption=''):
     cfg = load_meta_config()
-    page_id = cfg['page_id']; ig_id = cfg['ig_user_id']
+    page_id = cfg['page_id']
+    ig_id = cfg['ig_user_id']
     user_token = cfg['page_access_token']
+
     if not story_url:
         raise RuntimeError('no story url; cannot post.')
+
     try:
         token = _get_page_token(page_id, user_token)
     except Exception as e:
@@ -1316,19 +1370,24 @@ def post_story_to_meta(story_url, caption=''):
     ig_ok = False
 
     try:
-        photo = _fb_page_photo(page_id, token, story_url, caption, published=False)
-        _fb_story(page_id, token, photo['id'])
-        print('    [meta] FB story OK')
+        def fb_story_op():
+            photo = _fb_page_photo(page_id, token, story_url, caption, published=False)
+            return _fb_story(page_id, token, photo['id'])
+
+        meta_retry('FB story', fb_story_op, attempts=3)
         fb_ok = True
     except Exception as e:
-        print('    [meta] FB story FAILED: %s' % e)
+        print(f'    [meta] FB story FAILED after 3 attempts: {e}')
 
     try:
-        _ig_publish(ig_id, user_token, story_url, is_story=True)
-        print('    [meta] IG story OK')
+        meta_retry(
+            'IG story',
+            lambda: _ig_publish(ig_id, user_token, story_url, is_story=True),
+            attempts=3
+        )
         ig_ok = True
     except Exception as e:
-        print('    [meta] IG story FAILED: %s' % e)
+        print(f'    [meta] IG story FAILED after 3 attempts: {e}')
 
     return fb_ok, ig_ok
 
@@ -1362,24 +1421,49 @@ def _ig_carousel_child(ig_id, token, image_url):
 
 def _ig_carousel_post(ig_id, token, image_urls, caption=''):
     child_ids = [_ig_carousel_child(ig_id, token, url) for url in image_urls]
+
     c = requests.post('%s/%s/media' % (GRAPH, ig_id),
-                      data={'media_type': 'CAROUSEL',
-                            'children': ','.join(child_ids),
-                            'caption': caption,
-                            'access_token': token})
+                      data={
+                          'media_type': 'CAROUSEL',
+                          'children': ','.join(child_ids),
+                          'caption': caption,
+                          'access_token': token
+                      })
     c.raise_for_status()
     creation_id = c.json()['id']
-    for _ in range(10):
+
+    finished = False
+    last_status = None
+
+    for _ in range(20):
         st = requests.get('%s/%s' % (GRAPH, creation_id),
-                          params={'fields': 'status_code', 'access_token': token})
-        code = st.json().get('status_code')
-        if code == 'FINISHED':
+                          params={
+                              'fields': 'status_code',
+                              'access_token': token
+                          })
+        st.raise_for_status()
+        last_status = st.json().get('status_code')
+
+        if last_status == 'FINISHED':
+            finished = True
             break
-        if code == 'ERROR':
+
+        if last_status == 'ERROR':
             raise RuntimeError('IG carousel container error: %s' % st.text)
+
         time.sleep(3)
+
+    if not finished:
+        raise RuntimeError(
+            'IG carousel container not ready after waiting. '
+            'Last status: %s, creation_id: %s' % (last_status, creation_id)
+        )
+
     p = requests.post('%s/%s/media_publish' % (GRAPH, ig_id),
-                      data={'creation_id': creation_id, 'access_token': token})
+                      data={
+                          'creation_id': creation_id,
+                          'access_token': token
+                      })
     p.raise_for_status()
     return p.json()
 
@@ -1388,32 +1472,42 @@ def _ig_carousel_post(ig_id, token, image_urls, caption=''):
 # ============================================================
 def post_carousel_to_meta(image_urls, caption=''):
     cfg = load_meta_config()
-    page_id = cfg['page_id']; ig_id = cfg['ig_user_id']
+    page_id = cfg['page_id']
+    ig_id = cfg['ig_user_id']
     user_token = cfg['page_access_token']
+
     if not image_urls:
         raise RuntimeError('no image urls; cannot post carousel.')
+
     try:
         token = _get_page_token(page_id, user_token)
     except Exception as e:
         print('    [meta] could not derive Page token: %s' % e)
         token = user_token
 
-    fb_ok = False
-    ig_ok = False
-
+    # IMPORTANT:
+    # IG carousel first. If this fails after 3 attempts, raise and stop the script.
     try:
-        _fb_carousel_post(page_id, token, image_urls, caption)
-        print('    [meta] FB carousel OK')
-        fb_ok = True
-    except Exception as e:
-        print('    [meta] FB carousel FAILED: %s' % e)
-
-    try:
-        _ig_carousel_post(ig_id, user_token, image_urls, caption)
-        print('    [meta] IG carousel OK')
+        meta_retry(
+            'IG carousel',
+            lambda: _ig_carousel_post(ig_id, user_token, image_urls, caption),
+            attempts=3
+        )
         ig_ok = True
     except Exception as e:
-        print('    [meta] IG carousel FAILED: %s' % e)
+        raise RuntimeError(f'IG carousel failed after 3 attempts. Aborting whole script: {e}')
+
+    # FB carousel second. Retry 3 times.
+    fb_ok = False
+    try:
+        meta_retry(
+            'FB carousel',
+            lambda: _fb_carousel_post(page_id, token, image_urls, caption),
+            attempts=3
+        )
+        fb_ok = True
+    except Exception as e:
+        print(f'    [meta] FB carousel FAILED after 3 attempts: {e}')
 
     return fb_ok, ig_ok
 
@@ -1676,7 +1770,11 @@ def run():
             if m['motm_path']:
                 caption += f'\n\nPlayer of the Match: {m["motm_player_name"]}'
 
-            reel_fb_ok, reel_ig_ok = post_carousel_to_meta(reel_urls, caption=caption)
+            try:
+                reel_fb_ok, reel_ig_ok = post_carousel_to_meta(reel_urls, caption=caption)
+            except Exception as e:
+                print(f'{tab} row {row_num}: FATAL - {e}')
+                raise
 
             # ---- Stories: Match Results first, then MotM after (separate posts) ----
             mr_story_url = github_raw_url(m['mr_story_path']) if m['mr_story_path'] else None
