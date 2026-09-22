@@ -1038,7 +1038,7 @@ def find_rows_missing_post(ws):
             result.append(i)
     return result, headers, post_idx
 
-def def extract_scorers(headers, row_vals):
+def extract_scorers(headers, row_vals):
     def normalize_minute(raw):
         """
         Accepts formats like:
