@@ -1038,31 +1038,62 @@ def find_rows_missing_post(ws):
             result.append(i)
     return result, headers, post_idx
 
-def extract_scorers(headers, row_vals):
+def def extract_scorers(headers, row_vals):
+    def normalize_minute(raw):
+        """
+        Accepts formats like:
+          "'34"
+          "34'"
+          "34"
+          "34 mins"
+          "34 min"
+          "34 minutes"
+
+        Returns:
+          "34'"
+        """
+        s = (raw or '').strip()
+        if not s:
+            return ""
+
+        # Take the first number found anywhere in the cell
+        m = re.search(r'\d+', s)
+        if not m:
+            return ""
+
+        return m.group(0) + "'"
+
     order = []
     by_name = {}
+
     for n in range(1, 16):
         m_col = f"goal {n} - minute"
         s_col = f"goal {n} - scorer"
+
         if m_col in headers and s_col in headers:
             mi, si = headers.index(m_col), headers.index(s_col)
-            minute = row_vals[mi].strip() if len(row_vals) > mi and row_vals[mi] else ""
+
+            minute_raw = row_vals[mi].strip() if len(row_vals) > mi and row_vals[mi] else ""
             scorer = row_vals[si].strip() if len(row_vals) > si and row_vals[si] else ""
+
             if not scorer:
                 continue
-            mm = minute.replace("'", "'").strip()
-            if mm and not mm.endswith("'"):
-                mm += "'"
+
+            mm = normalize_minute(minute_raw)
+
             key = _norm(scorer)
             if key not in by_name:
                 by_name[key] = {'name': scorer, 'mins': []}
                 order.append(key)
+
             if mm:
                 by_name[key]['mins'].append(mm)
+
     out = []
     for key in order:
         entry = by_name[key]
         out.append((' '.join(entry['mins']), entry['name']))
+
     return out
 
 # ============================================================
