@@ -5,6 +5,15 @@ google-api-python-client
 Pillow
 requests
 pillow-heif
-rembg
+
 onnxruntime
 PyMuPDF
+
+torch
+torchvision
+transformers
+safetensors
+huggingface-hub
+timm
+einops
+kornia
