@@ -16,6 +16,9 @@ from datetime import datetime
 
 import requests
 import gspread
+import torch
+from torchvision import transforms
+from transformers import AutoModelForImageSegmentation
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -28,12 +31,6 @@ try:
 except Exception as e:
     read_heif = None
     print('  [heic] pillow-heif not available: %s' % e)
-
-try:
-    from rembg import remove
-except ImportError:
-    def remove(data):
-        return data
 
 try:
     import fitz  # PyMuPDF, for SVG flags
@@ -391,6 +388,68 @@ def load_raster_photo_from_bytes(data, filename=""):
         raise RuntimeError(
             f"Could not decode player photo '{filename}'. Pillow error: {pil_err}"
         )
+# ============================================================
+# BIREFNET BACKGROUND REMOVAL
+# ============================================================
+BIR_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+_BIR_MODEL = None
+
+_BIR_TRANSFORM = transforms.Compose([
+    transforms.Resize((1024, 1024)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        [0.485, 0.456, 0.406],
+        [0.229, 0.224, 0.225]
+    )
+])
+
+
+def get_birefnet_model():
+    global _BIR_MODEL
+
+    if _BIR_MODEL is None:
+        print(f'Loading BiRefNet on {BIR_DEVICE}...')
+
+        _BIR_MODEL = AutoModelForImageSegmentation.from_pretrained(
+            "ZhengPeng7/BiRefNet",
+            trust_remote_code=True
+        )
+
+        _BIR_MODEL = _BIR_MODEL.to(BIR_DEVICE)
+        _BIR_MODEL = _BIR_MODEL.float()
+        _BIR_MODEL.eval()
+
+        print('BiRefNet dtype:', next(_BIR_MODEL.parameters()).dtype)
+
+    return _BIR_MODEL
+
+
+def remove_bg_birefnet_from_image(image):
+    image = image.convert("RGB")
+    original_size = image.size
+
+    model = get_birefnet_model()
+
+    input_tensor = _BIR_TRANSFORM(image).unsqueeze(0)
+    input_tensor = input_tensor.to(device=BIR_DEVICE, dtype=torch.float32)
+
+    with torch.no_grad():
+        pred = model(input_tensor)[-1].sigmoid().detach().cpu()[0].squeeze()
+
+    pred = pred.float()
+
+    mask = transforms.ToPILImage()(pred)
+    mask = mask.resize(original_size, Image.LANCZOS)
+
+    out = image.convert("RGBA")
+    out.putalpha(mask)
+
+    return out
+
+
+def remove_bg_birefnet(data, filename=""):
+    image = load_raster_photo_from_bytes(data, filename=filename).convert("RGB")
+    return remove_bg_birefnet_from_image(image)
 
 def get_nationality_for_player(client, player_name):
     ws = with_retry(client.open_by_key(PERSONAL_INFO_SS_ID).worksheet, PERSONAL_INFO_TAB)
@@ -678,10 +737,7 @@ def get_player_photo(drive, player_folders, player_name):
         try:
             data = download_file_bytes(drive, choice['id'])
 
-            # Original Match Results behaviour
-            Image.open(io.BytesIO(data)).verify()
-            cut = remove(data)
-            img = Image.open(io.BytesIO(cut)).convert('RGBA')
+            img = remove_bg_birefnet(data, filename=choice.get('name', ''))
 
             alpha = img.split()[3]
             alpha = alpha.filter(ImageFilter.MinFilter(9))
@@ -1136,10 +1192,7 @@ def find_file_by_stem_motm(drive, parent_folder_id, target_stem):
 # MOTM: IMAGE COMPOSITION HELPERS (unchanged)
 # ============================================================
 def remove_background_motm(img):
-    data = io.BytesIO()
-    img.save(data, format="PNG")
-    result_bytes = remove(data.getvalue())
-    return Image.open(io.BytesIO(result_bytes)).convert("RGBA")
+    return remove_bg_birefnet_from_image(img)
 
 def crop_to_content_motm(img):
     if img.mode != "RGBA":
