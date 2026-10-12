@@ -23,7 +23,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 
 try:
     from pillow_heif import register_heif_opener, read_heif
@@ -335,6 +335,7 @@ def load_image_from_bytes(data, filename="", svg_width=1000):
 
     try:
         img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
         img.load()
         return img.convert("RGBA")
     except Exception as pil_err:
