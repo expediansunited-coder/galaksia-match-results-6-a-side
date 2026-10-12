@@ -362,24 +362,64 @@ def load_image_from_bytes(data, filename="", svg_width=1000):
 def load_raster_photo_from_bytes(data, filename=""):
     """
     For player photos only.
-    Does not resize, crop, rotate, or alter proportions.
-    Only decodes the image bytes into RGBA.
+    Does not resize, crop, rotate, EXIF-transpose, or alter proportions.
+    HEIC/HEIF is decoded with transformations disabled.
     """
+    name = (filename or "").lower()
+
+    # For HEIC/HEIF player photos, bypass Image.open because the registered
+    # pillow-heif opener may apply orientation/transforms automatically.
+    if name.endswith((".heic", ".heif")):
+        if read_heif is None:
+            raise RuntimeError(
+                f"Could not decode player photo '{filename}': pillow-heif not available."
+            )
+
+        try:
+            try:
+                heif = read_heif(data, apply_transformations=False)
+            except TypeError:
+                # Older pillow-heif versions may not support this argument.
+                heif = read_heif(data)
+
+            img = Image.frombytes(
+                heif.mode,
+                heif.size,
+                heif.data,
+                "raw",
+            )
+            img.load()
+            return img.convert("RGBA")
+
+        except Exception as heif_err:
+            raise RuntimeError(
+                f"Could not decode HEIF player photo '{filename}'. "
+                f"HEIF error: {heif_err}"
+            )
+
+    # JPG/PNG/WebP/etc: Pillow does NOT rotate unless ImageOps.exif_transpose is called.
     try:
         img = Image.open(io.BytesIO(data))
         img.load()
         return img.convert("RGBA")
+
     except Exception as pil_err:
         if read_heif is not None:
             try:
-                heif = read_heif(data)
+                try:
+                    heif = read_heif(data, apply_transformations=False)
+                except TypeError:
+                    heif = read_heif(data)
+
                 img = Image.frombytes(
                     heif.mode,
                     heif.size,
                     heif.data,
                     "raw",
                 )
+                img.load()
                 return img.convert("RGBA")
+
             except Exception as heif_err:
                 raise RuntimeError(
                     f"Could not decode player photo '{filename}'. "
