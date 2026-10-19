@@ -17,3 +17,4 @@ huggingface-hub
 timm
 einops
 kornia
+cairosvg
