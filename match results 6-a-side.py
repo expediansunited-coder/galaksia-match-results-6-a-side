@@ -316,22 +316,34 @@ def load_image_from_bytes(data, filename="", svg_width=1000):
     name = (filename or "").lower()
 
     if name.endswith(".svg"):
-        if fitz is None:
-            raise RuntimeError(
-                f"Cannot load SVG '{filename}' because PyMuPDF is not installed. "
-                f"Add PyMuPDF to requirements.txt."
-            )
+    fitz_err = None
 
-        doc = fitz.open(stream=data, filetype="svg")
-        page = doc[0]
-        zoom = svg_width / page.rect.width
-        matrix = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=matrix, alpha=True)
-        png_bytes = pix.tobytes("png")
+    if fitz is not None:
+        try:
+            doc = fitz.open(stream=data, filetype="svg")
+            page = doc[0]
+            zoom = svg_width / page.rect.width
+            matrix = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=matrix, alpha=True)
+            png_bytes = pix.tobytes("png")
 
+            img = Image.open(io.BytesIO(png_bytes))
+            img.load()
+            return img.convert("RGBA")
+        except Exception as e:
+            fitz_err = e
+
+    try:
+        import cairosvg
+        png_bytes = cairosvg.svg2png(bytestring=data, output_width=svg_width)
         img = Image.open(io.BytesIO(png_bytes))
         img.load()
         return img.convert("RGBA")
+    except Exception as cairo_err:
+        raise RuntimeError(
+            f"Could not decode SVG '{filename}'. "
+            f"PyMuPDF error: {fitz_err}; CairoSVG error: {cairo_err}"
+        )
 
     try:
         img = Image.open(io.BytesIO(data))
