@@ -584,60 +584,43 @@ def remove_edge_background(img, tol=60):
     w, h = img.size
     px = img.load()
 
-    corners = [px[0, 0], px[w-1, 0], px[0, h-1], px[w-1, h-1]]
-    bg_r = sum(c[0] for c in corners) // 4
-    bg_g = sum(c[1] for c in corners) // 4
-    bg_b = sum(c[2] for c in corners) // 4
+    corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+    bg = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
 
     mask = bytearray(w * h)
     for y in range(h):
         for x in range(w):
-            idx = y * w + x
             c = px[x, y]
-            if c[3] == 0:
-                mask[idx] = 0
-                continue
-            dist = abs(c[0] - bg_r) + abs(c[1] - bg_g) + abs(c[2] - bg_b)
-            mask[idx] = 0 if dist <= tol else 1
+            dist = abs(c[0] - bg[0]) + abs(c[1] - bg[1]) + abs(c[2] - bg[2])
+            mask[y * w + x] = 0 if dist < tol else 1
 
-    dq = deque()
-    visited = bytearray(w * h)
+    q = deque()
+    seen = bytearray(w * h)
 
     for x in range(w):
         for y in (0, h - 1):
             idx = y * w + x
-            if mask[idx] == 0 and not visited[idx]:
-                dq.append((x, y))
-                visited[idx] = 1
+            if mask[idx] == 0:
+                q.append((x, y))
+                seen[idx] = 1
 
     for y in range(h):
         for x in (0, w - 1):
             idx = y * w + x
-            if mask[idx] == 0 and not visited[idx]:
-                dq.append((x, y))
-                visited[idx] = 1
+            if mask[idx] == 0:
+                q.append((x, y))
+                seen[idx] = 1
 
-    outside = bytearray(w * h)
-
-    while dq:
-        x, y = dq.popleft()
-        idx = y * w + x
-        outside[idx] = 1
-
-        for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
+    while q:
+        x, y = q.popleft()
+        px[x, y] = px[x, y][:3] + (0,)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nx, ny = x + dx, y + dy
             if 0 <= nx < w and 0 <= ny < h:
-                nidx = ny * w + nx
-                if not visited[nidx] and mask[nidx] == 0:
-                    visited[nidx] = 1
-                    dq.append((nx, ny))
-
-    for y in range(h):
-        for x in range(w):
-            idx = y * w + x
-            if outside[idx]:
-                c = px[x, y]
-                px[x, y] = (c[0], c[1], c[2], 0)
+                idx = ny * w + nx
+                if not seen[idx] and mask[idx] == 0:
+                    seen[idx] = 1
+                    q.append((nx, ny))
 
     cb = img.getbbox()
     return img.crop(cb) if cb else img
