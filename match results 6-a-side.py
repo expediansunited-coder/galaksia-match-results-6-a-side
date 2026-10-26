@@ -374,13 +374,11 @@ def load_image_from_bytes(data, filename="", svg_width=1000):
 def load_raster_photo_from_bytes(data, filename=""):
     """
     For player photos only.
-    Does not resize, crop, rotate, EXIF-transpose, or alter proportions.
-    HEIC/HEIF is decoded with transformations disabled.
+    Applies EXIF/HEIF orientation correction only — no resize, crop, or
+    proportion changes otherwise.
     """
     name = (filename or "").lower()
 
-    # For HEIC/HEIF player photos, bypass Image.open because the registered
-    # pillow-heif opener may apply orientation/transforms automatically.
     if name.endswith((".heic", ".heif")):
         if read_heif is None:
             raise RuntimeError(
@@ -389,7 +387,7 @@ def load_raster_photo_from_bytes(data, filename=""):
 
         try:
             try:
-                heif = read_heif(data, apply_transformations=False)
+                heif = read_heif(data, apply_transformations=True)
             except TypeError:
                 # Older pillow-heif versions may not support this argument.
                 heif = read_heif(data)
@@ -409,9 +407,10 @@ def load_raster_photo_from_bytes(data, filename=""):
                 f"HEIF error: {heif_err}"
             )
 
-    # JPG/PNG/WebP/etc: Pillow does NOT rotate unless ImageOps.exif_transpose is called.
+    # JPG/PNG/WebP/etc: apply EXIF orientation before using.
     try:
         img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
         img.load()
         return img.convert("RGBA")
 
@@ -419,7 +418,7 @@ def load_raster_photo_from_bytes(data, filename=""):
         if read_heif is not None:
             try:
                 try:
-                    heif = read_heif(data, apply_transformations=False)
+                    heif = read_heif(data, apply_transformations=True)
                 except TypeError:
                     heif = read_heif(data)
 
