@@ -806,21 +806,33 @@ def choose_player_photo(drive, ws, players_played, picture_col_idx, row_num, loo
                 used.add(_norm(rr[0]))
 
     player_folders = list_subfolders(drive, PLAYER_PHOTOS_ROOT_FOLDER_ID)
-    folders_map = {_norm(re.sub(r'\s*\([^)]*\)\s*$', '', f['name'])): f for f in player_folders}
 
     exclude_norm = _norm(exclude_name) if exclude_name else None
+
     candidates = [p for p in players_played
-                  if _norm(p) and _norm(p) in folders_map and _norm(p) not in used
+                  if _norm(p)
+                  and _norm(p) not in used
                   and (exclude_norm is None or _norm(p) != exclude_norm)]
+
     if not candidates:
         return None, None
 
     random.shuffle(candidates)
+
     for player_name in candidates:
+        folder_id = find_player_folder_id(player_folders, player_name)
+
+        if not folder_id:
+            print(f"  no photo folder matched for {player_name}, trying next...")
+            continue
+
         img = get_player_photo(drive, player_folders, player_name)
+
         if img is not None:
             return player_name, img
+
         print(f"  photo failed for {player_name}, trying next...")
+
     return None, None
 
 # ============================================================
